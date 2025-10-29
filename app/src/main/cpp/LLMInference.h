@@ -5,6 +5,8 @@
 #include <vector>
 #include <cstring>
 #include <utility>
+#include <sstream>
+#include <cctype>
 
 // Model metadata structure
 struct ModelMetadata {
@@ -28,6 +30,7 @@ private:
     std::vector<llama_token> _promptTokens;
     int _prevLen = 0;
     const char* _chatTemplate = nullptr;
+    const char* _modelChatTemplate = nullptr; // Store original model template
     
     // Response tracking
     std::string _response;
@@ -53,21 +56,29 @@ public:
     
     // Static metadata reading (before loading model)
     static ModelMetadata getModelMetadata(const char* modelPath);
+    static ModelMetadata getModelMetadataFallback(const char* modelPath);
     
     // Model lifecycle
-    bool loadModel(const char* modelPath, int threads, int contextLength, 
+    bool loadModel(const char* modelPath, int threads, int contextLength,
                    float temperature, bool storeChats);
+    void startFreshConversation(); // Clears context without losing model
     void freeModel();
     bool isReady() const { return _model != nullptr && _ctx != nullptr; }
     
     // Chat management
     void addChatMessage(const char* message, const char* role);
+    void addSystemPrompt(const char* prompt) { addChatMessage(prompt, "system"); }
+    void addUserMessage(const char* message) { addChatMessage(message, "user"); }
+    void addAssistantMessage(const char* message) { addChatMessage(message, "assistant"); }
     void clearMessages();
     
     // Generation lifecycle
     bool startCompletion(const char* query);
     std::string completionLoop();  // Returns token piece or "[EOG]"
     void stopCompletion();
+
+    // Response post-processing
+    std::string postProcessResponse(const std::string& rawResponse);
     
     // Metrics
     float getResponseGenerationTime() const;

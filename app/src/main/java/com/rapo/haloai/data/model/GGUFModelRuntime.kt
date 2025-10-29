@@ -40,11 +40,26 @@ class GGUFModelRuntime @Inject constructor() : ModelRuntime {
     private external fun stopCompletion(handle: Long)
     private external fun getResponseGenerationSpeed(handle: Long): Float
     private external fun getContextSizeUsed(handle: Long): Int
+    private external fun clearMessages(handle: Long)
     private external fun freeModel(handle: Long)
     
     // Public method to read model metadata before loading
     fun readMetadata(modelPath: String): ModelMetadata {
         return getModelMetadata(modelPath)
+    }
+
+    // Public method to add chat message for conversation context
+    fun addConversationMessage(message: String, role: String) {
+        if (isModelLoaded && modelHandle != 0L) {
+            addChatMessage(modelHandle, message, role)
+        }
+    }
+
+    // Public method to clear conversation history
+    fun clearConversation() {
+        if (isModelLoaded && modelHandle != 0L) {
+            clearMessages(modelHandle)
+        }
     }
 
     companion object {

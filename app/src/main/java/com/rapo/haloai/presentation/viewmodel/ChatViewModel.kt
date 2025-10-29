@@ -218,16 +218,54 @@ class ChatViewModel @Inject constructor(
             var tokenCount = 0
             val maxTokens = _generationSettings.value.maxTokens
             var stopReason = "unknown"
-            
+
             // Build conversation history for context-aware responses
-            val recentMessages = _messages.value.takeLast(5) // Last 5 messages for context
-            
-            // Use direct prompt without templates
-            val fullPrompt = prompt
-            
-            Log.d(TAG, "Full prompt: ${fullPrompt.length} chars, includes ${recentMessages.size} previous messages, max tokens: $maxTokens")
-            
-            currentRuntime.generateResponse(fullPrompt, maxTokens = maxTokens)
+            val conversationMessages = _messages.value.takeLast(10) // Last 10 messages for context
+            val hasExistingConversation = conversationMessages.isNotEmpty()
+
+            // For GGUF runtime, prepare chat messages
+            if (currentRuntime is com.rapo.haloai.data.model.GGUFModelRuntime) {
+                val ggufRuntime = currentRuntime as com.rapo.haloai.data.model.GGUFModelRuntime
+
+                // Clear existing conversation and rebuild with complete history
+                ggufRuntime.clearConversation()
+
+                // Add conversation history to model (last 10 messages for context)
+                for (msg in conversationMessages) {
+                    val role = when(msg.role) {
+                        "user" -> "user"
+                        "assistant" -> "assistant"
+                        else -> "system"
+                    }
+                    // Extract clean message content without metadata footer
+                    val cleanContent = if (msg.role == "assistant") {
+                        msg.content.substringBefore("\n\n---\n").trim()
+                    } else {
+                        msg.content.trim()
+                    }
+                    ggufRuntime.addConversationMessage(cleanContent, role)
+                }
+
+                // Clear any system prompt from input since it's handled by chat template
+                val cleanPrompt = prompt.removePrefix("System: ").trim()
+
+                // Start generation with just the current user message
+                Log.d(TAG, "GGUF generation: cleared conversation, rebuilt with ${conversationMessages.size} messages, prompt: \"$cleanPrompt\"")
+                currentRuntime.generateResponse(cleanPrompt, maxTokens = maxTokens)
+            } else {
+                // ONNX runtime - build simple text prompt with history
+                val contextText = conversationMessages.joinToString("\n\n") {
+                    "${if (it.role == "user") "User" else "Assistant"}: ${it.content}"
+                }
+                val fullPrompt = if (contextText.isNotEmpty()) {
+                    "$contextText\n\nUser: $prompt\nAssistant:"
+                } else {
+                    "User: $prompt\nAssistant:"
+                }
+
+                Log.d(TAG, "ONNX full prompt: ${fullPrompt.length} chars, includes ${conversationMessages.size} messages, max tokens: $maxTokens")
+                currentRuntime.generateResponse(fullPrompt, maxTokens = maxTokens)
+            }
                 .catch { e ->
                     if (e is kotlinx.coroutines.CancellationException) {
                         Log.d(TAG, "Generation cancelled by user")
@@ -400,12 +438,26 @@ class ChatViewModel @Inject constructor(
                     title = "New Chat"
                 )
             )
+            // Clear messages immediately when creating new chat
+            _messages.value = emptyList()
             _currentSessionId.value = newSessionId
+            Log.d(TAG, "Created new chat session: $newSessionId")
         }
     }
     
     fun switchToSession(sessionId: String) {
+        // Clear messages immediately when switching sessions to avoid showing old messages
+        _messages.value = emptyList()
         _currentSessionId.value = sessionId
+        // Clear conversation history in runtime when switching sessions
+        viewModelScope.launch {
+            val runtime = modelManager.getCurrentRuntime()
+            if (runtime is com.rapo.haloai.data.model.GGUFModelRuntime) {
+                runtime.clearConversation()
+                Log.d(TAG, "Cleared conversation history when switching to session: $sessionId")
+            }
+        }
+        Log.d(TAG, "Switched to session: $sessionId")
     }
     
     fun deleteSession(sessionId: String) {
@@ -422,6 +474,7 @@ class ChatViewModel @Inject constructor(
         viewModelScope.launch {
             chatRepository.deleteSession(_currentSessionId.value)
             _messages.value = emptyList()
+            Log.d(TAG, "Cleared current chat session: ${_currentSessionId.value}")
         }
     }
     
