@@ -1,0 +1,2 @@
+# Don't track llama.cpp in main repo (it's a submodule)
+llama.cpp/
