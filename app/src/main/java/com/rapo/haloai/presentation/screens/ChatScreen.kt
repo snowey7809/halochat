@@ -18,6 +18,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.drawscope.DrawScope
+import androidx.compose.foundation.Canvas
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.LocalContext
@@ -52,6 +54,8 @@ fun ChatScreen(
     val showReloadDialog by viewModel.showReloadModelDialog.collectAsState()
     val sessions by viewModel.sessions.collectAsState()
     val currentSessionId by viewModel.currentSessionId.collectAsState()
+    val generationSpeed by viewModel.generationSpeed.collectAsState()
+    val contextUsed by viewModel.contextUsed.collectAsState()
     val listState = rememberLazyListState()
     val haptic = LocalHapticFeedback.current
     val coroutineScope = rememberCoroutineScope()
@@ -80,35 +84,36 @@ fun ChatScreen(
         }
     }
     
-    // Auto-scroll during generation with smart detection
-    LaunchedEffect(streamedResponse.length) {
-        if (isGenerating && streamedResponse.isNotEmpty()) {
-            // Auto-scroll if enabled AND user is near bottom
-            if (shouldAutoScroll && isNearBottom) {
-                // Scroll every ~50 chars (roughly 10-15 tokens)
-                if (streamedResponse.length % 50 == 0) {
-                    listState.scrollToItem(messages.size)
-                }
+    // Auto-scroll during generation
+    LaunchedEffect(isGenerating, streamedResponse.length) {
+        if (isGenerating && streamedResponse.isNotEmpty() && shouldAutoScroll) {
+            // Scroll every 50 chars to reduce jank
+            if (streamedResponse.length % 50 == 0) {
+                // Scroll to the streaming message (after all saved messages)
+                listState.scrollToItem(messages.size)
             }
         }
     }
     
-    // Detect significant upward scroll
+    // Detect scroll position changes
     LaunchedEffect(Unit) {
         snapshotFlow { listState.firstVisibleItemIndex }
             .collect { currentIndex ->
-                // Only disable auto-scroll if user scrolled UP significantly (more than 1 item)
                 if (listState.isScrollInProgress) {
+                    // User scrolled up significantly - disable auto-scroll
                     if (currentIndex < lastScrollIndex - 1) {
-                        // User scrolled up significantly
                         shouldAutoScroll = false
-                    } else if (isNearBottom) {
-                        // User is near bottom, enable auto-scroll
-                        shouldAutoScroll = true
                     }
                     lastScrollIndex = currentIndex
                 }
             }
+    }
+    
+    // Resume autoscroll when user scrolls back to bottom
+    LaunchedEffect(isNearBottom, isGenerating) {
+        if (isNearBottom && isGenerating) {
+            shouldAutoScroll = true
+        }
     }
     
     // Model reload confirmation dialog
@@ -218,6 +223,17 @@ fun ChatScreen(
                         .fillMaxSize()
                         .imePadding()
                 ) {
+                    // Context warning banner
+                    val contextMax = viewModel.generationSettings.value.contextLength
+                    if (contextUsed > 0) {
+                        ContextWarningBanner(contextUsed, contextMax)
+                    }
+                    
+                    // Real-time metrics (show during/after generation)
+                    if (isGenerating || generationSpeed > 0f) {
+                        GenerationMetrics(generationSpeed, contextUsed, contextMax)
+                    }
+                    
                     LazyColumn(
                         state = listState,
                         modifier = Modifier
@@ -853,19 +869,31 @@ fun ChatSettingsDialog(
                     maxLines = 5
                 )
                 
+                // Auto-configure button
+                Button(
+                    onClick = {
+                        viewModel.autoConfigureFromModel()
+                    },
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Icon(Icons.Default.AutoAwesome, contentDescription = null)
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text("Auto-Configure from Model")
+                }
+                
                 HorizontalDivider()
                 
                 // Max Tokens
                 Text("Max Tokens: ${settings.maxTokens}", style = MaterialTheme.typography.bodyMedium)
                 Text(
-                    "Higher values allow longer responses (up to 128k)",
+                    "Tokens per response (higher = longer answers)",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
                 Slider(
                     value = settings.maxTokens.toFloat(),
                     onValueChange = { viewModel.updateMaxTokens(it.toInt()) },
-                    valueRange = 32f..131072f,
+                    valueRange = 128f..4096f,
                     steps = 0
                 )
                 
@@ -908,7 +936,7 @@ fun ChatSettingsDialog(
                 var tempContext by remember(settings.contextLength) { mutableStateOf(settings.contextLength) }
                 Text("Context Length: $tempContext", style = MaterialTheme.typography.bodyMedium)
                 Text(
-                    "Requires model reload",
+                    "Total context window (Requires model reload)",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -920,8 +948,8 @@ fun ChatSettingsDialog(
                             viewModel.updateContextLength(tempContext)
                         }
                     },
-                    valueRange = 256f..1792f,
-                    steps = 5
+                    valueRange = 1024f..8192f,
+                    steps = 7
                 )
             }
         },
@@ -988,4 +1016,106 @@ fun ModelReloadConfirmationDialog(
             }
         }
     )
+}
+
+@Composable
+fun ContextWarningBanner(contextUsed: Int, contextMax: Int) {
+    val percent = (contextUsed * 100f) / contextMax
+    
+    if (percent > 70) {
+        Surface(
+            modifier = Modifier.fillMaxWidth(),
+            color = if (percent > 90) 
+                MaterialTheme.colorScheme.errorContainer 
+            else 
+                MaterialTheme.colorScheme.tertiaryContainer
+        ) {
+            Row(
+                modifier = Modifier.padding(12.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Icon(
+                    if (percent > 90) Icons.Default.Error else Icons.Default.Warning,
+                    contentDescription = null,
+                    tint = if (percent > 90) 
+                        MaterialTheme.colorScheme.error 
+                    else 
+                        MaterialTheme.colorScheme.tertiary
+                )
+                Text(
+                    text = if (percent > 90)
+                        "⚠️ Context almost full! Clear chat to continue."
+                    else
+                        "Context filling up (${percent.toInt()}%). Consider starting new chat.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = if (percent > 90)
+                        MaterialTheme.colorScheme.onErrorContainer
+                    else
+                        MaterialTheme.colorScheme.onTertiaryContainer
+                )
+            }
+        }
+    }
+}
+
+@Composable
+fun GenerationMetrics(speed: Float, contextUsed: Int, contextMax: Int) {
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        color = MaterialTheme.colorScheme.surfaceVariant,
+        tonalElevation = 1.dp
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+            horizontalArrangement = Arrangement.spacedBy(24.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            // Speed indicator
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(4.dp)
+            ) {
+                val color = when {
+                    speed > 10f -> Color(0xFF4CAF50) // Green
+                    speed > 5f -> Color(0xFFFFC107) // Yellow
+                    speed > 2f -> Color(0xFFFF9800) // Orange
+                    else -> Color(0xFFF44336) // Red
+                }
+                
+                Canvas(modifier = Modifier.size(8.dp)) {
+                    drawCircle(color = color)
+                }
+                
+                Text(
+                    text = "⚡ ${String.format("%.1f", speed)} tok/s",
+                    style = MaterialTheme.typography.labelMedium,
+                    fontWeight = FontWeight.Medium
+                )
+            }
+            
+            // Context usage
+            val contextPercent = (contextUsed * 100f) / contextMax
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(4.dp)
+            ) {
+                Icon(
+                    Icons.Default.Storage,
+                    contentDescription = null,
+                    modifier = Modifier.size(16.dp),
+                    tint = when {
+                        contextPercent < 50 -> Color(0xFF4CAF50)
+                        contextPercent < 80 -> Color(0xFFFFC107)
+                        else -> Color(0xFFF44336)
+                    }
+                )
+                
+                Text(
+                    text = "$contextUsed/$contextMax (${contextPercent.toInt()}%)",
+                    style = MaterialTheme.typography.labelMedium
+                )
+            }
+        }
+    }
 }

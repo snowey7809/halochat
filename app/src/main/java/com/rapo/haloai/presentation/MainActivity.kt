@@ -94,10 +94,7 @@ fun MainScreen() {
                     ModelsScreen(navController = navController)
                 }
                 composable("settings") {
-                    SettingsScreen(onNavigateToExperimental = { navController.navigate("experimental") })
-                }
-                 composable("experimental") {
-                    ExperimentalScreen()
+                    SettingsScreen()
                 }
             }
         }

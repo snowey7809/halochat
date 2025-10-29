@@ -18,10 +18,34 @@ class GGUFModelRuntime @Inject constructor() : ModelRuntime {
     
     var threads: Int = 4
     var contextLength: Int = 1535
+    
+    // Expose metrics
+    fun getGenerationSpeed(): Float {
+        return if (isModelLoaded && modelHandle != 0L) {
+            getResponseGenerationSpeed(modelHandle)
+        } else 0f
+    }
+    
+    fun getContextUsage(): Int {
+        return if (isModelLoaded && modelHandle != 0L) {
+            getContextSizeUsed(modelHandle)
+        } else 0
+    }
 
+    private external fun getModelMetadata(modelPath: String): ModelMetadata
     private external fun initModel(modelPath: String, threads: Int, contextLength: Int): Long
-    private external fun generateText(handle: Long, prompt: String, maxTokens: Int, callback: (String) -> Unit)
+    private external fun addChatMessage(handle: Long, message: String, role: String)
+    private external fun startCompletion(handle: Long, prompt: String)
+    private external fun completionLoop(handle: Long): String
+    private external fun stopCompletion(handle: Long)
+    private external fun getResponseGenerationSpeed(handle: Long): Float
+    private external fun getContextSizeUsed(handle: Long): Int
     private external fun freeModel(handle: Long)
+    
+    // Public method to read model metadata before loading
+    fun readMetadata(modelPath: String): ModelMetadata {
+        return getModelMetadata(modelPath)
+    }
 
     companion object {
         private const val TAG = "GGUFModelRuntime"
@@ -87,33 +111,59 @@ class GGUFModelRuntime @Inject constructor() : ModelRuntime {
         return callbackFlow {
             try {
                 Log.d(TAG, "generateResponse called")
-                Log.d(TAG, "isModelLoaded: $isModelLoaded, handle: $modelHandle")
                 
                 if (!isModelLoaded || modelHandle == 0L) {
                     Log.e(TAG, "Model not initialized!")
                     throw IllegalStateException("Model not initialized")
                 }
                 
-                // Use the prompt as-is from ViewModel (already formatted)
-                // ViewModel handles conversation history and role formatting
-                val fullPrompt = prompt
-                val limitedTokens = maxTokens
-                
-                Log.d(TAG, "Calling native generateText with maxTokens=$limitedTokens (requested: $maxTokens)")
+                // Start completion
+                startCompletion(modelHandle, prompt)
+                Log.d(TAG, "Completion started")
                 
                 var tokenCount = 0
-                generateText(modelHandle, fullPrompt, limitedTokens) { token ->
+                
+                // Generation loop - call completionLoop until EOS
+                while (tokenCount < maxTokens) {
+                    val piece = completionLoop(modelHandle)
+                    
+                    // Check for special markers
+                    when (piece) {
+                        "[EOG]" -> {
+                            Log.d(TAG, "End of generation at $tokenCount tokens")
+                            break
+                        }
+                        "[ERROR]" -> {
+                            Log.e(TAG, "Generation error")
+                            throw IllegalStateException("Generation error")
+                        }
+                        else -> {
+                            if (piece.isNotEmpty()) {
+                                trySend(piece).isSuccess
+                            }
+                        }
+                    }
+                    
                     tokenCount++
+                    
                     if (tokenCount % 20 == 0) {
                         Log.d(TAG, "Generated $tokenCount tokens so far")
                     }
-                    trySend(token).isSuccess
                 }
                 
-                Log.d(TAG, "Native generateText completed with $tokenCount tokens")
+                // Stop completion
+                stopCompletion(modelHandle)
+                
+                val speed = getResponseGenerationSpeed(modelHandle)
+                val contextUsed = getContextSizeUsed(modelHandle)
+                Log.d(TAG, "Generation complete: $tokenCount tokens, $speed tok/s, context: $contextUsed")
+                
                 close()
             } catch (e: Exception) {
                 Log.e(TAG, "Error in generateResponse", e)
+                try {
+                    stopCompletion(modelHandle)
+                } catch (ignored: Exception) {}
                 close(e)
             }
         }.flowOn(Dispatchers.Default)

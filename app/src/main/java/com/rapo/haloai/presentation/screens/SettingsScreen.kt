@@ -20,7 +20,6 @@ import com.rapo.haloai.presentation.viewmodel.SettingsViewModel
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SettingsScreen(
-    onNavigateToExperimental: () -> Unit,
     settingsViewModel: SettingsViewModel = hiltViewModel(),
     modelsViewModel: ModelsViewModel = hiltViewModel()
 ) {
@@ -88,15 +87,7 @@ fun SettingsScreen(
             )
         }
         item {
-            Text("About & Experimental", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.primary)
-        }
-        item {
-            SettingItem(
-                title = "Experimental Features",
-                subtitle = "View experimental features",
-                icon = Icons.Default.Science,
-                onClick = onNavigateToExperimental
-            )
+            Text("About", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.primary)
         }
     }
 }

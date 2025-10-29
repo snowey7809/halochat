@@ -49,6 +49,7 @@ add_subdirectory(${LLAMA_CPP_DIR} llama_build EXCLUDE_FROM_ALL)
 
 # JNI Bridge sources
 set(JNI_SOURCES
+    ${CMAKE_CURRENT_SOURCE_DIR}/LLMInference.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/jni_bridge.cpp
 )
 
