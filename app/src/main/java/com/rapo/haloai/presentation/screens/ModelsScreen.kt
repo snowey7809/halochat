@@ -32,6 +32,7 @@ fun ModelsScreen(
     val downloadProgress by viewModel.downloadProgress.collectAsState()
     val importStatus by viewModel.importStatus.collectAsState()
     val errorMessage by viewModel.errorMessage.collectAsState()
+    val navigateToChat by viewModel.navigateToChat.collectAsState()
     
     // File picker for local GGUF models
     val filePicker = rememberLauncherForActivityResult(
@@ -116,6 +117,17 @@ fun ModelsScreen(
         if (importStatus?.startsWith("Model imported") == true) {
             kotlinx.coroutines.delay(2000)
             viewModel.clearImportStatus()
+        }
+    }
+
+    // Auto-navigate to chat screen when model is ready
+    LaunchedEffect(navigateToChat) {
+        if (navigateToChat != null) {
+            val (modelId, modelName) = navigateToChat
+            // Clear the navigation state immediately to prevent repeated navigations
+            viewModel.clearNavigationState()
+            // Navigate to chat screen - the ChatViewModel will handle loading the model
+            navController.navigate("chat")
         }
     }
     

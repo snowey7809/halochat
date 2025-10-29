@@ -33,6 +33,10 @@ class ModelsViewModel @Inject constructor(
     
     private val _errorMessage = MutableStateFlow<String?>(null)
     val errorMessage = _errorMessage.asStateFlow()
+
+    // Navigation state for automatic chat screen redirect
+    private val _navigateToChat = MutableStateFlow<Pair<String, String>?>(null) // Pair: (modelId, modelName)
+    val navigateToChat = _navigateToChat.asStateFlow()
     
     init {
         loadModels()
@@ -57,8 +61,13 @@ class ModelsViewModel @Inject constructor(
                             _errorMessage.value = "Download failed: ${error.message}"
                         } else {
                             _importStatus.value = "Model downloaded successfully"
+                            // Auto-navigate to chat screen after successful download
+                            loadModels()
+                            val downloadedModel = _models.value.find { it.sourceId == modelId }
+                            if (downloadedModel != null) {
+                                _navigateToChat.value = Pair(downloadedModel.id, downloadedModel.name)
+                            }
                         }
-                        loadModels()
                     }
                     .collect { progress ->
                         _downloadProgress.value = Pair(modelId, progress.progress)
@@ -84,6 +93,11 @@ class ModelsViewModel @Inject constructor(
                 if (result.isSuccess) {
                     _importStatus.value = "Model imported: ${result.getOrNull()?.name}"
                     loadModels()
+                    // Auto-navigate to chat screen after successful import
+                    val importedModel = result.getOrNull()
+                    if (importedModel != null) {
+                        _navigateToChat.value = Pair(importedModel.id, importedModel.name)
+                    }
                 } else {
                     _errorMessage.value = result.exceptionOrNull()?.message ?: "Import failed"
                 }
@@ -116,5 +130,9 @@ class ModelsViewModel @Inject constructor(
     
     fun clearError() {
         _errorMessage.value = null
+    }
+
+    fun clearNavigationState() {
+        _navigateToChat.value = null
     }
 }
