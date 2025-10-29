@@ -81,8 +81,14 @@ class ChatViewModel @Inject constructor(
     private fun loadChatHistory() {
         viewModelScope.launch {
             _currentSessionId.collect { sessionId ->
-                chatRepository.getMessages(sessionId).collect { messageList ->
-                    _messages.value = messageList
+                try {
+                    chatRepository.getMessages(sessionId).collect { messageList ->
+                        _messages.value = messageList
+                        Log.d(TAG, "Loaded ${messageList.size} messages for session $sessionId")
+                    }
+                } catch (e: Exception) {
+                    Log.e(TAG, "Error loading chat history", e)
+                    _messages.value = emptyList()
                 }
             }
         }
@@ -216,35 +222,8 @@ class ChatViewModel @Inject constructor(
             // Build conversation history for context-aware responses
             val recentMessages = _messages.value.takeLast(5) // Last 5 messages for context
             
-            // Build prompt with system message and conversation history
-            val systemPrompt = _generationSettings.value.systemPrompt
-            val fullPrompt = buildString {
-                // Add system prompt first
-                if (systemPrompt.isNotBlank()) {
-                    append(systemPrompt)
-                    append("\n\n")
-                }
-                
-                // Add conversation history in Q&A format
-                if (recentMessages.isNotEmpty()) {
-                    recentMessages.forEach { msg ->
-                        when (msg.role) {
-                            "user" -> {
-                                append("Q: ${msg.content}\n")
-                            }
-                            "assistant" -> {
-                                // Remove metadata footer if present
-                                val content = msg.content.substringBefore("\n\n---\n")
-                                append("A: $content\n\n")
-                            }
-                        }
-                    }
-                }
-                
-                // Add current user question
-                append("Q: $prompt\n")
-                append("A:")
-            }
+            // Use direct prompt without templates
+            val fullPrompt = prompt
             
             Log.d(TAG, "Full prompt: ${fullPrompt.length} chars, includes ${recentMessages.size} previous messages, max tokens: $maxTokens")
             
@@ -261,11 +240,22 @@ class ChatViewModel @Inject constructor(
                     }
                 }
                 .collect { token ->
-                    assistantMessage += token
-                    _streamedResponse.value = assistantMessage
-                    tokenCount++
-                    if (tokenCount % 10 == 0) {
-                        Log.d(TAG, "Generated $tokenCount tokens (${assistantMessage.length} chars)")
+                    // Simple token collection without complex cleaning
+                    if (token.isNotEmpty()) {
+                        assistantMessage += token
+                        _streamedResponse.value = assistantMessage
+                        tokenCount++
+                        
+                        if (tokenCount % 10 == 0) {
+                            Log.d(TAG, "Generated $tokenCount tokens (${assistantMessage.length} chars)")
+                        }
+                        
+                        // Add a maximum token limit as a safety measure
+                        if (tokenCount > 500) {
+                            currentRuntime.stopGeneration()
+                            Log.d(TAG, "Reached maximum token limit, stopping generation")
+                            return@collect
+                        }
                     }
                 }
             
@@ -291,6 +281,9 @@ class ChatViewModel @Inject constructor(
             
             Log.d(TAG, "Generation complete: $tokenCount tokens in ${responseTimeMs}ms (${String.format("%.2f", tokensPerSecond)} tok/s) - Stop: $stopReason")
             
+            // Use the raw message without complex cleaning
+              val cleanedAssistantMessage = assistantMessage
+            
             // Append metadata footer to message
             val stopReasonText = when (stopReason) {
                 "eos_token" -> "🛑 Stopped: End of sequence"
@@ -299,7 +292,7 @@ class ChatViewModel @Inject constructor(
             }
             
             val metadataFooter = "\n\n---\n*$stopReasonText • ${tokenCount} tokens • ${String.format("%.1f", responseTimeMs / 1000f)}s • ${String.format("%.1f", tokensPerSecond)} tok/s*"
-            val finalMessage = assistantMessage + metadataFooter
+            val finalMessage = cleanedAssistantMessage + metadataFooter
             
             // Save AI response with performance metrics
             val aiMessage = ChatEntity(
@@ -482,14 +475,21 @@ class ChatViewModel @Inject constructor(
     }
     
     fun confirmModelReload() {
-        pendingSettingsChange?.invoke()
-        pendingSettingsChange = null
-        _showReloadModelDialog.value = false
+        try {
+            pendingSettingsChange?.invoke()
+            Log.d(TAG, "Model reload confirmed and settings applied")
+        } catch (e: Exception) {
+            Log.e(TAG, "Error applying settings changes", e)
+        } finally {
+            pendingSettingsChange = null
+            _showReloadModelDialog.value = false
+        }
     }
     
     fun cancelModelReload() {
         pendingSettingsChange = null
         _showReloadModelDialog.value = false
+        Log.d(TAG, "Model reload cancelled")
     }
     
     private fun generateSessionTitle(firstMessage: String): String {

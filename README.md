@@ -69,7 +69,7 @@ Halo Chat is built with a modern Android architecture:
 ### Setup Development Environment
 1. Clone the repository
    ```bash
-   git clone https://github.com/yourusername/halochat.git
+   git clone https://github.com/snowey7809/halochat.git
    cd halochat
    ```
 
